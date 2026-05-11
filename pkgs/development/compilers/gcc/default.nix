@@ -66,9 +66,7 @@
 let
   inherit (lib)
     callPackageWith
-    filter
     getBin
-    maintainers
     makeLibraryPath
     makeSearchPathOutput
     mapAttrs
@@ -77,7 +75,6 @@ let
     optionals
     optionalString
     pipe
-    platforms
     versionAtLeast
     versions
     ;
@@ -88,12 +85,10 @@ let
   version = gccVersions.fromMajorMinor majorMinorVersion;
 
   majorVersion = versions.major version;
-  atLeast14 = versionAtLeast version "14";
   atLeast13 = versionAtLeast version "13";
   atLeast12 = versionAtLeast version "12";
   atLeast11 = versionAtLeast version "11";
   atLeast10 = versionAtLeast version "10";
-  is14 = majorVersion == "14";
   is13 = majorVersion == "13";
   is12 = majorVersion == "12";
   is11 = majorVersion == "11";
@@ -451,7 +446,6 @@ pipe
           license
           description
           longDescription
-          platforms
           teams
           mainProgram
           identifiers
