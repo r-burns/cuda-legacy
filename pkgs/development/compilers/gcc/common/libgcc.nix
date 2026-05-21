@@ -10,6 +10,7 @@
   hostPlatform,
   withoutTargetLibc,
   libcCross,
+  hostIsTarget,
 }:
 
 assert !stdenv.targetPlatform.hasSharedLibraries -> !enableShared;
@@ -24,19 +25,13 @@ lib.pipe drv
         pkg:
         pkg.overrideAttrs (
           previousAttrs:
-          lib.optionalAttrs
-            (
-              (!lib.systems.equals targetPlatform hostPlatform)
-              && (enableShared || targetPlatform.isMinGW)
-              && withoutTargetLibc
-            )
-            {
-              makeFlags = [
-                "all-gcc"
-                "all-target-libgcc"
-              ];
-              installTargets = "install-gcc install-target-libgcc";
-            }
+          lib.optionalAttrs (!hostIsTarget && (enableShared || targetPlatform.isMinGW) && withoutTargetLibc) {
+            makeFlags = [
+              "all-gcc"
+              "all-target-libgcc"
+            ];
+            installTargets = "install-gcc install-target-libgcc";
+          }
         )
       )
 
@@ -50,8 +45,7 @@ lib.pipe drv
 
         (
           let
-            targetPlatformSlash =
-              if lib.systems.equals hostPlatform targetPlatform then "" else "${targetPlatform.config}/";
+            targetPlatformSlash = if hostIsTarget then "" else "${targetPlatform.config}/";
 
             # If we are building a cross-compiler and the target libc provided
             # to us at build time has a libgcc, use that instead of building a
@@ -60,7 +54,12 @@ lib.pipe drv
             useLibgccFromTargetLibc = libcCross != null && libcCross ? passthru.libgcc;
 
             enableLibGccOutput =
-              (!stdenv.targetPlatform.isWindows || (lib.systems.equals stdenv.targetPlatform stdenv.hostPlatform))
+              # $libgcc logic is currently hardcoded for .so
+              # NOTE: isPE was added in Nixpkgs 3dcf921c (master only, not release-25.11).
+              !(stdenv.hostPlatform.isPE or (stdenv.hostPlatform.isWindows || stdenv.hostPlatform.isCygwin))
+              && !(stdenv.targetPlatform.isPE
+                or (stdenv.targetPlatform.isWindows || stdenv.targetPlatform.isCygwin)
+              )
               && !langJit
               && !stdenv.hostPlatform.isDarwin
               && enableShared

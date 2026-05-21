@@ -30,12 +30,19 @@
   which,
   patchelf,
   binutils,
+  autoconf269,
   isl ? null, # optional, for the Graphite optimization framework.
   zlib ? null,
   libucontext ? null,
   gnat-bootstrap ? null,
+  # Allows only computing system equality once across every file responsible for
+  # building gcc. Not part of the public API
+  _systemInfo ? {
+    buildIsHost = lib.systems.equals stdenv.buildPlatform stdenv.hostPlatform;
+    hostIsTarget = lib.systems.equals stdenv.hostPlatform stdenv.targetPlatform;
+  },
   enableMultilib ? false,
-  enablePlugin ? (lib.systems.equals stdenv.hostPlatform stdenv.buildPlatform), # Whether to support user-supplied plug-ins
+  enablePlugin ? _systemInfo.buildIsHost, # Whether to support user-supplied plug-ins
   name ? "gcc",
   libcCross ? null,
   threadsCross ? { }, # for MinGW
@@ -59,9 +66,7 @@
 let
   inherit (lib)
     callPackageWith
-    filter
     getBin
-    maintainers
     makeLibraryPath
     makeSearchPathOutput
     mapAttrs
@@ -70,21 +75,20 @@ let
     optionals
     optionalString
     pipe
-    platforms
     versionAtLeast
     versions
     ;
+
+  inherit (_systemInfo) buildIsHost hostIsTarget;
 
   gccVersions = import ./versions.nix;
   version = gccVersions.fromMajorMinor majorMinorVersion;
 
   majorVersion = versions.major version;
-  atLeast14 = versionAtLeast version "14";
   atLeast13 = versionAtLeast version "13";
   atLeast12 = versionAtLeast version "12";
   atLeast11 = versionAtLeast version "11";
   atLeast10 = versionAtLeast version "10";
-  is14 = majorVersion == "14";
   is13 = majorVersion == "13";
   is12 = majorVersion == "12";
   is11 = majorVersion == "11";
@@ -106,21 +110,16 @@ let
   disableBootstrap = atLeast11 && !stdenv.hostPlatform.isDarwin && (atLeast12 -> !profiledCompiler);
 
   inherit (stdenv) buildPlatform hostPlatform targetPlatform;
-  targetConfig =
-    if (!lib.systems.equals targetPlatform hostPlatform) then targetPlatform.config else null;
+  targetConfig = if (!hostIsTarget) then targetPlatform.config else null;
 
   patches = callFile ./patches { };
 
   # Cross-gcc settings (build == host != target)
-  crossMingw = (!lib.systems.equals targetPlatform hostPlatform) && targetPlatform.isMinGW;
+  crossMingw = (!hostIsTarget) && targetPlatform.isMinGW;
   stageNameAddon = optionalString withoutTargetLibc "-nolibc";
-  crossNameAddon = optionalString (
-    !lib.systems.equals targetPlatform hostPlatform
-  ) "${targetPlatform.config}${stageNameAddon}-";
+  crossNameAddon = optionalString (!hostIsTarget) "${targetPlatform.config}${stageNameAddon}-";
 
-  targetPrefix = lib.optionalString (
-    !lib.systems.equals stdenv.targetPlatform stdenv.hostPlatform
-  ) "${stdenv.targetPlatform.config}-";
+  targetPrefix = lib.optionalString (!hostIsTarget) "${stdenv.targetPlatform.config}-";
 
   callFile = callPackageWith {
     # lets
@@ -140,6 +139,7 @@ let
     # inherit generated with 'nix eval --json --impure --expr "with import ./. {}; lib.attrNames (lib.functionArgs gcc${majorVersion}.cc.override)" | jq '.[]' --raw-output'
     inherit
       apple-sdk
+      autoconf269
       binutils
       buildPackages
       cargo
@@ -191,6 +191,8 @@ let
       which
       zlib
       ;
+
+    inherit buildIsHost hostIsTarget;
   };
 
 in
@@ -229,6 +231,8 @@ pipe
       };
 
       inherit patches;
+
+      __structuredAttrs = true;
 
       outputs = [
         "out"
@@ -275,7 +279,7 @@ pipe
         substituteInPlace libgfortran/configure \
           --replace "-install_name \\\$rpath/\\\$soname" "-install_name ''${!outputLib}/lib/\\\$soname"
       ''
-      + (optionalString ((!lib.systems.equals targetPlatform hostPlatform) || stdenv.cc.libc != null)
+      + (optionalString ((!hostIsTarget) || stdenv.cc.libc != null)
         # On NixOS, use the right path to the dynamic linker instead of
         # `/lib/ld*.so'.
         (
@@ -348,16 +352,12 @@ pipe
           let
             target =
               optionalString (profiledCompiler) "profiled"
-              + optionalString (
-                (lib.systems.equals targetPlatform hostPlatform)
-                && (lib.systems.equals hostPlatform buildPlatform)
-                && !disableBootstrap
-              ) "bootstrap";
+              + optionalString (hostIsTarget && buildIsHost && !disableBootstrap) "bootstrap";
           in
           optional (target != "") target
         else
           optional (
-            (lib.systems.equals targetPlatform hostPlatform) && (lib.systems.equals hostPlatform buildPlatform)
+            hostIsTarget && buildIsHost
           ) (if profiledCompiler then "profiledbootstrap" else "bootstrap");
 
       inherit (callFile ./common/strip-attributes.nix { })
@@ -387,13 +387,11 @@ pipe
           # compiler (after the specs for the cross-gcc are created). Having
           # LIBRARY_PATH= makes gcc read the specs from ., and the build breaks.
 
-          CPATH = optionals (lib.systems.equals targetPlatform hostPlatform) (
+          CPATH = optionals hostIsTarget (
             makeSearchPathOutput "dev" "include" ([ ] ++ optional (zlib != null) zlib)
           );
 
-          LIBRARY_PATH = optionals (lib.systems.equals targetPlatform hostPlatform) (
-            makeLibraryPath (optional (zlib != null) zlib)
-          );
+          LIBRARY_PATH = optionals hostIsTarget (makeLibraryPath (optional (zlib != null) zlib));
 
           NIX_LDFLAGS = optionalString hostPlatform.isSunOS "-lm";
 
@@ -403,7 +401,7 @@ pipe
             ;
         }
         //
-          optionalAttrs (!atLeast12 && stdenv.cc.isClang && (!lib.systems.equals targetPlatform hostPlatform))
+          optionalAttrs (!atLeast12 && stdenv.cc.isClang && (!hostIsTarget))
             {
               NIX_CFLAGS_COMPILE = "-Wno-register";
             }
@@ -450,7 +448,6 @@ pipe
           license
           description
           longDescription
-          platforms
           teams
           mainProgram
           identifiers
@@ -461,7 +458,7 @@ pipe
       }
       // optionalAttrs is10 {
         badPlatforms =
-          if (!lib.systems.equals targetPlatform hostPlatform) then [ "aarch64-darwin" ] else [ ];
+          if (!hostIsTarget) then [ "aarch64-darwin" ] else [ ];
       };
     }
     // optionalAttrs (!atLeast10 && stdenv.targetPlatform.isDarwin) {
@@ -484,6 +481,7 @@ pipe
           langJit
           targetPlatform
           hostPlatform
+          hostIsTarget
           withoutTargetLibc
           enableShared
           libcCross
@@ -491,6 +489,13 @@ pipe
       })
     ]
     ++ optionals atLeast11 [
-      (callPackage ./common/checksum.nix { inherit langC langCC; })
+      (callPackage ./common/checksum.nix {
+        inherit
+          langC
+          langCC
+          buildIsHost
+          hostIsTarget
+          ;
+      })
     ]
   )
