@@ -402,3 +402,7 @@ in
 # Make Darwin bootstrap respect whether the assembler supports `--gstabs`,
 # which is not supported by the clang integrated assembler used by default on Darwin.
 ++ optional (is9 && hostPlatform.isDarwin) ./9/gcc9-darwin-as-gstabs.patch
+
+# Backport "gcc13: fix build with linux 7.1 headers" to previous versions
+# Fixes build against removed linux/scc.h header
+++ optional (!atLeast13) ./no-linux-scc.patch
